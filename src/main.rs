@@ -4,12 +4,17 @@ use bevy::{camera::ScalingMode, prelude::*, window::WindowResolution};
 
 use bevy_asset_loader::prelude::*;
 use bevy_ecs_ldtk::prelude::*;
-use bevy_ecs_tilemap::prelude::*;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
-use bevy_sprite3d::prelude::*;
 
+use crate::tilemap3d::{Layer3d, Tilemap3dPlugin};
+
+mod tilemap3d;
+
+// const GRID_SIZE: f32 = 16.;
+// const LEVEL_SIZE: Vec2 = Vec2::new(512., 288.);
+
+const GRID_SIZE: f32 = 1.;
 const LEVEL_SIZE: Vec2 = Vec2::new(32., 18.);
-const TILE_SIZE: f32 = 16.0;
 
 fn main() {
     App::new()
@@ -26,7 +31,7 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugins((Sprite3dPlugin, LdtkPlugin))
+        .add_plugins((Tilemap3dPlugin::<LayerDepth>::default(), LdtkPlugin))
         .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
         .init_state::<GameState>()
         .add_loading_state(
@@ -42,14 +47,7 @@ fn main() {
             ..default()
         })
         .add_systems(OnEnter(GameState::Ready), setup)
-        .add_systems(
-            Update,
-            (
-                update_level_on_spawn,
-                move_light,
-                add_sprite_on_tile_spawn.run_if(resource_exists::<AllAssets>),
-            ),
-        )
+        .add_systems(Update, move_light)
         .run();
 }
 
@@ -64,12 +62,34 @@ enum GameState {
 struct AllAssets {
     #[asset(path = "test_world.ldtk")]
     world: Handle<LdtkProject>,
+}
 
-    #[asset(path = "tileset.png")]
-    tileset: Handle<Image>,
+#[derive(Debug)]
+enum LayerDepth {
+    Front,
+    Middle,
+    Back,
+}
 
-    #[asset(texture_atlas_layout(tile_size_x = 16, tile_size_y = 16, columns = 24, rows = 24))]
-    layout: Handle<TextureAtlasLayout>,
+impl Layer3d for LayerDepth {
+    const PIXEL_PER_METER: f32 = 16.0 / GRID_SIZE;
+
+    fn try_from_layer_name(name: impl AsRef<str>) -> Result<Self> {
+        match name.as_ref() {
+            "Back" => Ok(Self::Back),
+            "Middle" | "Wall" => Ok(Self::Middle),
+            "Front" => Ok(Self::Front),
+            _ => Err(format!("Unsupported Layer type {}", name.as_ref()).into()),
+        }
+    }
+
+    fn depth(&self) -> f32 {
+        match self {
+            LayerDepth::Front => 3.,
+            LayerDepth::Middle => 2.,
+            LayerDepth::Back => 1.,
+        }
+    }
 }
 
 fn setup(
@@ -88,22 +108,22 @@ fn setup(
             },
             ..OrthographicProjection::default_2d()
         }),
-        Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 2.0),
+        Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 20.0),
     ));
 
     commands.insert_resource(GlobalAmbientLight {
         color: Color::WHITE.into(),
-        brightness: 2000.0,
+        brightness: 200.0,
         ..default()
     });
 
     // plane
-    let mut transform = Transform::from_xyz(0., 0., 0.5);
+    let mut transform = Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 0.5);
     transform.rotate_x(PI / 2.);
 
     commands.spawn((
         Name::new("Background"),
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(100.0, 100.0))),
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(LEVEL_SIZE.x, LEVEL_SIZE.y))),
         MeshMaterial3d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
         transform,
     ));
@@ -112,60 +132,16 @@ fn setup(
     commands.spawn((
         PointLight {
             shadows_enabled: true,
+            range: 20. * GRID_SIZE,
             ..default()
         },
-        Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 2.0),
+        Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 2. * GRID_SIZE),
     ));
 
     commands.spawn(LdtkWorldBundle {
         ldtk_handle: assets.world.clone().into(),
         ..default()
     });
-}
-
-fn update_level_on_spawn(
-    level_query: Query<(&Children, &mut Transform), Added<LevelIid>>,
-    mut tilemap_query: Query<(&Name, &mut Transform), (With<TilemapSize>, Without<LevelIid>)>,
-) {
-    for (level_children, mut level_transform) in level_query {
-        level_transform.translation = level_transform.translation.reduce_to_3d();
-
-        for child in level_children.iter() {
-            if let Ok((tilemap_name, mut tilemap_transform)) = tilemap_query.get_mut(child) {
-                tilemap_transform.translation = tilemap_transform.translation.reduce_to_3d();
-
-                if let Ok(layer) = LayerDepth::try_from_layer_name(tilemap_name.as_str()) {
-                    tilemap_transform.move_to_layer(layer);
-                }
-            }
-        }
-    }
-}
-
-fn add_sprite_on_tile_spawn(
-    mut commands: Commands,
-    assets: Res<AllAssets>,
-    tiles: Query<(Entity, &TileTextureIndex, &mut Transform), Added<TileTextureIndex>>,
-) {
-    for (entity, texture_index, mut transform) in tiles {
-        let atlas = TextureAtlas::from(assets.layout.clone()).with_index(texture_index.0 as usize);
-
-        transform.translation = transform.translation.reduce_to_3d();
-
-        commands.entity(entity).insert((
-            Sprite {
-                image: assets.tileset.clone(),
-                texture_atlas: Some(atlas),
-                ..default()
-            },
-            Sprite3d {
-                pixels_per_metre: TILE_SIZE,
-                alpha_mode: AlphaMode::Mask(0.5),
-                unlit: false,
-                ..default()
-            },
-        ));
-    }
 }
 
 fn move_light(
@@ -194,52 +170,6 @@ fn move_light(
             direction.z -= 0.1;
         }
 
-        transform.translation += time.delta_secs() * 10.0 * direction;
-    }
-}
-
-#[derive(Debug)]
-enum LayerDepth {
-    Front,
-    Middle,
-    Back,
-}
-
-impl LayerDepth {
-    fn try_from_layer_name(name: impl AsRef<str>) -> Result<Self, String> {
-        match name.as_ref() {
-            "Back" => Ok(Self::Back),
-            "Middle" | "Wall" => Ok(Self::Middle),
-            "Front" => Ok(Self::Front),
-            _ => Err(format!("Unsupported Layer type {}", name.as_ref())),
-        }
-    }
-
-    fn depth(&self) -> f32 {
-        match self {
-            LayerDepth::Front => 3.,
-            LayerDepth::Middle => 2.,
-            LayerDepth::Back => 1.,
-        }
-    }
-}
-
-trait MoveToLayer {
-    fn move_to_layer(&mut self, layer: LayerDepth);
-}
-
-impl MoveToLayer for Transform {
-    fn move_to_layer(&mut self, layer: LayerDepth) {
-        self.translation.z = layer.depth();
-    }
-}
-
-trait Plaformer3d {
-    fn reduce_to_3d(&self) -> Vec3;
-}
-
-impl Plaformer3d for Vec3 {
-    fn reduce_to_3d(&self) -> Vec3 {
-        Vec3::new(self.x / TILE_SIZE, self.y / TILE_SIZE, self.z)
+        transform.translation += time.delta_secs() * 5.0 * direction * GRID_SIZE;
     }
 }

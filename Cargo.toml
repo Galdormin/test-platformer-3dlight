@@ -7,6 +7,9 @@ edition = "2024"
 bevy = "0.18.0"
 bevy-inspector-egui = "0.36.0"
 bevy_asset_loader = { version = "0.25.0", features = [ "2d" ] }
-bevy_ecs_ldtk = { version = "0.14.0", default-features = false, features = [ "internal_levels" ] }
-bevy_ecs_tilemap = { version = "0.18.1", default-features = false }
+bevy_ecs_ldtk = { version = "0.14.0", default-features = false, features = [
+    "internal_levels",
+    "atlas",
+] }
+bevy_ecs_tilemap = { version = "0.18.1", default-features = false, features = [ "atlas" ] }
 bevy_sprite3d = "8.0.0"
