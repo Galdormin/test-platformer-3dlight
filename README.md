@@ -16,11 +16,41 @@ Small Bevy prototype showing how to render an LDtk 2D tilemap as 3D sprites, the
 Each spawned tile gets a `Sprite` + `Sprite3d` component so the tilemap is rendered in 3D space. The default renderer from `bevy_ecs_tilemap` don't work in 3D.
 The coordinate must be change from pixel to meter, therefore x and y coordinates are divided by 16.
 
-## How to Run
+
+## How to run
+
+You can compare the 3d rendering with the 2d rendering based on the features `2d` and `3d`.
+
+Run in 3D mode:
 
 ```bash
 cargo run
 ```
+
+Run in 2D mode (uses bevy_ecs_tilemap renderer):
+
+```bash
+cargo run --no-default-features --features 2d
+```
+
+
+## Tilemap3dPlugin Quick Overview
+
+`Tilemap3dPlugin` converts spawned LDtk tile entities into `Sprite + Sprite3d`,
+converts tilemap coordinates from pixels to meters, and applies Z depth from LDtk layer names.
+
+For 16x16 pixel art, two common setups are useful:
+
+- `16 pixels_per_metre`: world scale closer to a classic 3D setup
+- `1 pixel_per_metre`: keeps world dimensions close to the 2D mode
+
+When changing world scale, light settings must also be scaled to keep a similar visual result:
+
+- Distance/range scales by `d`
+- Intensity scales by `d^2`
+
+Where `d` is the scene scale factor between both setups.
+Example when switching from `1 px/m` to `16 px/m`: `d = 16`, so use roughly `range x16` and `intensity x256`.
 
 - `W` / `S`: Move light on Y axis
 - `A` / `D`: Move light on X axis

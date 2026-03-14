@@ -1,3 +1,4 @@
+#[cfg(feature = "3d")]
 use std::f32::consts::PI;
 
 use bevy::{camera::ScalingMode, prelude::*, window::WindowResolution};
@@ -6,49 +7,66 @@ use bevy_asset_loader::prelude::*;
 use bevy_ecs_ldtk::prelude::*;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
+#[cfg(feature = "3d")]
 use crate::tilemap3d::{Layer3d, Tilemap3dPlugin};
 
+#[cfg(feature = "3d")]
 mod tilemap3d;
 
-// const GRID_SIZE: f32 = 16.;
-// const LEVEL_SIZE: Vec2 = Vec2::new(512., 288.);
+#[cfg(all(feature = "2d", feature = "3d"))]
+compile_error!("Features '2d' and '3d' are mutually exclusive. Enable only one of them.");
 
+#[cfg(not(any(feature = "2d", feature = "3d")))]
+compile_error!("Enable one rendering mode feature: '2d' or '3d'.");
+
+#[cfg(feature = "2d")]
+const LEVEL_SIZE: Vec2 = Vec2::new(512., 288.);
+
+#[cfg(feature = "3d")]
 const GRID_SIZE: f32 = 1.;
+#[cfg(feature = "3d")]
 const LEVEL_SIZE: Vec2 = Vec2::new(32., 18.);
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(ImagePlugin::default_nearest())
-                .set(WindowPlugin {
-                    primary_window: Window {
-                        fit_canvas_to_parent: true,
-                        resolution: WindowResolution::new(1024, 576),
-                        ..default()
-                    }
-                    .into(),
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(ImagePlugin::default_nearest())
+            .set(WindowPlugin {
+                primary_window: Window {
+                    fit_canvas_to_parent: true,
+                    resolution: WindowResolution::new(1024, 576),
                     ..default()
-                }),
-        )
-        .add_plugins((Tilemap3dPlugin::<LayerDepth>::default(), LdtkPlugin))
-        .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
-        .init_state::<GameState>()
-        .add_loading_state(
-            LoadingState::new(GameState::Loading)
-                .continue_to_state(GameState::Ready)
-                .load_collection::<AllAssets>(),
-        )
-        .insert_resource(LevelSelection::index(0))
-        .insert_resource(LdtkSettings {
-            level_spawn_behavior: bevy_ecs_ldtk::LevelSpawnBehavior::UseWorldTranslation {
-                load_level_neighbors: true,
-            },
-            ..default()
-        })
-        .add_systems(OnEnter(GameState::Ready), setup)
-        .add_systems(Update, move_light)
-        .run();
+                }
+                .into(),
+                ..default()
+            }),
+    )
+    .add_plugins(LdtkPlugin)
+    .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
+    .init_state::<GameState>()
+    .add_loading_state(
+        LoadingState::new(GameState::Loading)
+            .continue_to_state(GameState::Ready)
+            .load_collection::<AllAssets>(),
+    )
+    .insert_resource(LevelSelection::index(0))
+    .insert_resource(LdtkSettings {
+        level_spawn_behavior: bevy_ecs_ldtk::LevelSpawnBehavior::UseWorldTranslation {
+            load_level_neighbors: true,
+        },
+        ..default()
+    });
+
+    #[cfg(feature = "3d")]
+    app.add_plugins(Tilemap3dPlugin::<LayerDepth>::new())
+        .add_systems(OnEnter(GameState::Ready), setup_3d)
+        .add_systems(Update, move_light);
+
+    #[cfg(feature = "2d")]
+    app.add_systems(OnEnter(GameState::Ready), setup_2d);
+
+    app.run();
 }
 
 #[derive(States, Default, Debug, Hash, Eq, PartialEq, Clone, Copy)]
@@ -65,12 +83,14 @@ struct AllAssets {
 }
 
 #[derive(Debug)]
+#[cfg(feature = "3d")]
 enum LayerDepth {
     Front,
     Middle,
     Back,
 }
 
+#[cfg(feature = "3d")]
 impl Layer3d for LayerDepth {
     const PIXEL_PER_METER: f32 = 16.0 / GRID_SIZE;
 
@@ -92,7 +112,27 @@ impl Layer3d for LayerDepth {
     }
 }
 
-fn setup(
+#[cfg(feature = "2d")]
+fn setup_2d(mut commands: Commands, assets: Res<AllAssets>) {
+    commands.spawn((
+        Camera2d,
+        Projection::from(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: LEVEL_SIZE.y,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+        Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 20.0),
+    ));
+
+    commands.spawn(LdtkWorldBundle {
+        ldtk_handle: assets.world.clone().into(),
+        ..default()
+    });
+}
+
+#[cfg(feature = "3d")]
+fn setup_3d(
     mut commands: Commands,
     assets: Res<AllAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -102,7 +142,6 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         Projection::from(OrthographicProjection {
-            // 6 world units per pixel of window height.
             scaling_mode: ScalingMode::FixedVertical {
                 viewport_height: LEVEL_SIZE.y,
             },
@@ -144,6 +183,7 @@ fn setup(
     });
 }
 
+#[cfg(feature = "3d")]
 fn move_light(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,

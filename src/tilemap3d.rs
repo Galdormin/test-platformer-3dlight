@@ -8,8 +8,8 @@ use bevy_sprite3d::prelude::*;
 #[derive(Debug)]
 pub struct Tilemap3dPlugin<L>(PhantomData<L>);
 
-impl<T> Default for Tilemap3dPlugin<T> {
-    fn default() -> Self {
+impl<T> Tilemap3dPlugin<T> {
+    pub fn new() -> Self {
         Self(PhantomData)
     }
 }
