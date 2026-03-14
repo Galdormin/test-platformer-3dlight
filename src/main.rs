@@ -1,6 +1,3 @@
-#[cfg(feature = "3d")]
-use std::f32::consts::PI;
-
 use bevy::{camera::ScalingMode, prelude::*, window::WindowResolution};
 
 use bevy_asset_loader::prelude::*;
@@ -19,6 +16,8 @@ compile_error!("Features '2d' and '3d' are mutually exclusive. Enable only one o
 #[cfg(not(any(feature = "2d", feature = "3d")))]
 compile_error!("Enable one rendering mode feature: '2d' or '3d'.");
 
+#[cfg(feature = "2d")]
+const GRID_SIZE: f32 = 16.;
 #[cfg(feature = "2d")]
 const LEVEL_SIZE: Vec2 = Vec2::new(512., 288.);
 
@@ -56,7 +55,8 @@ fn main() {
             load_level_neighbors: true,
         },
         ..default()
-    });
+    })
+    .add_systems(Update, move_camera);
 
     #[cfg(feature = "3d")]
     app.add_plugins(Tilemap3dPlugin::<LayerDepth>::new())
@@ -132,12 +132,7 @@ fn setup_2d(mut commands: Commands, assets: Res<AllAssets>) {
 }
 
 #[cfg(feature = "3d")]
-fn setup_3d(
-    mut commands: Commands,
-    assets: Res<AllAssets>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup_3d(mut commands: Commands, assets: Res<AllAssets>) {
     // camera
     commands.spawn((
         Camera3d::default(),
@@ -155,17 +150,6 @@ fn setup_3d(
         brightness: 200.0,
         ..default()
     });
-
-    // plane
-    let mut transform = Transform::from_xyz(LEVEL_SIZE.x / 2., -LEVEL_SIZE.y / 2., 0.5);
-    transform.rotate_x(PI / 2.);
-
-    commands.spawn((
-        Name::new("Background"),
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(LEVEL_SIZE.x, LEVEL_SIZE.y))),
-        MeshMaterial3d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
-        transform,
-    ));
 
     // light
     commands.spawn((
@@ -208,6 +192,30 @@ fn move_light(
         }
         if input.pressed(KeyCode::KeyE) {
             direction.z -= 0.1;
+        }
+
+        transform.translation += time.delta_secs() * 5.0 * direction * GRID_SIZE;
+    }
+}
+
+fn move_camera(
+    input: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut query: Query<&mut Transform, Or<(With<Camera2d>, With<Camera3d>)>>,
+) {
+    for mut transform in &mut query {
+        let mut direction = Vec3::ZERO;
+        if input.pressed(KeyCode::ArrowUp) {
+            direction.y += 1.0;
+        }
+        if input.pressed(KeyCode::ArrowDown) {
+            direction.y -= 1.0;
+        }
+        if input.pressed(KeyCode::ArrowLeft) {
+            direction.x -= 1.0;
+        }
+        if input.pressed(KeyCode::ArrowRight) {
+            direction.x += 1.0;
         }
 
         transform.translation += time.delta_secs() * 5.0 * direction * GRID_SIZE;
