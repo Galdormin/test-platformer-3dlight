@@ -20,14 +20,17 @@ impl<L: Layer3d + Send + Sync + 'static> Plugin for Tilemap3dPlugin<L> {
         app.add_plugins(Sprite3dPlugin).add_systems(
             Update,
             (
-                update_level_on_spawn::<L>,
+                register_marker_on_level_spawn,
+                update_level_transform_on_spawn::<L>,
                 add_sprite_on_tile_spawn::<L>,
                 add_background_on_level_spawn::<L>,
-            ),
+            )
+                .chain(),
         );
     }
 }
 
+/// Trait to implement for the 3d layer of the tilemap
 pub trait Layer3d: Sized {
     const PIXEL_PER_METER: f32;
 
@@ -37,6 +40,10 @@ pub trait Layer3d: Sized {
     /// Return the z axis position of the layer
     fn depth(&self) -> f32;
 }
+
+/// Marker component to track if layer has lighthing
+#[derive(Debug, Component, Clone, Copy)]
+pub struct LightingEnabled;
 
 trait MoveToLayer {
     fn move_to_layer(&mut self, layer: impl Layer3d);
@@ -58,7 +65,33 @@ impl ConvertTo3d for Vec3 {
     }
 }
 
-fn update_level_on_spawn<L: Layer3d>(
+fn register_marker_on_level_spawn(
+    mut commands: Commands,
+    ldtk_projects: Res<Assets<LdtkProject>>,
+    ldtk_handle: Single<&LdtkProjectHandle>,
+    level_query: Query<(Entity, &LevelIid), Added<LevelIid>>,
+) {
+    let Some(ldtk_project) = ldtk_projects.get(*ldtk_handle) else {
+        return;
+    };
+
+    for (level_entity, level_iid) in level_query {
+        let Some(level) = ldtk_project
+            .as_standalone()
+            .get_loaded_level_by_iid(level_iid.get())
+        else {
+            warn!("Level added is not loaded!");
+            continue;
+        };
+
+        let lighting = level.get_bool_field("light").cloned().unwrap_or_default();
+        if lighting {
+            commands.entity(level_entity).insert(LightingEnabled);
+        }
+    }
+}
+
+fn update_level_transform_on_spawn<L: Layer3d>(
     level_query: Query<(&Children, &mut Transform), Added<LevelIid>>,
     mut tilemap_query: Query<(&Name, &mut Transform), (With<TilemapSize>, Without<LevelIid>)>,
 ) {
@@ -85,11 +118,12 @@ fn add_sprite_on_tile_spawn<L: Layer3d>(
     mut commands: Commands,
     image_assets: Res<Assets<Image>>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    levels: Query<Has<LightingEnabled>>,
     tiles: Query<(Entity, &TilemapId, &TileTextureIndex, &mut Transform), Added<TileTextureIndex>>,
-    tilemaps: Query<(&TilemapTexture, &TilemapTileSize)>,
+    tilemaps: Query<(&TilemapTexture, &TilemapTileSize, &ChildOf)>,
 ) {
     for (entity, tilemap_id, texture_index, mut transform) in tiles {
-        let Ok((tm_texture, tm_tile_size)) = tilemaps.get(tilemap_id.0) else {
+        let Ok((tm_texture, tm_tile_size, tm_parent)) = tilemaps.get(tilemap_id.0) else {
             error!("Tile {entity} has no TileMap.");
             continue;
         };
@@ -98,6 +132,8 @@ fn add_sprite_on_tile_spawn<L: Layer3d>(
             error!("Tile {entity} texture image is not yet loaded.");
             continue;
         };
+
+        let has_lighting = levels.get(tm_parent.0).unwrap_or_default();
 
         let tile_size = UVec2::new(tm_tile_size.x as u32, tm_tile_size.y as u32);
         let atlas_layout = TextureAtlasLayout::from_grid(
@@ -121,7 +157,7 @@ fn add_sprite_on_tile_spawn<L: Layer3d>(
             Sprite3d {
                 pixels_per_metre: L::PIXEL_PER_METER,
                 alpha_mode: AlphaMode::Mask(0.5),
-                unlit: false,
+                unlit: !has_lighting,
                 ..default()
             },
         ));
@@ -133,10 +169,10 @@ fn add_background_on_level_spawn<L: Layer3d>(
     image_assets: Res<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    levels: Query<&Children, Added<LevelIid>>,
+    levels: Query<(&Children, Has<LightingEnabled>), Added<LevelIid>>,
     mut background_sprites: Query<(Entity, &Sprite, &mut Transform), Without<TileTextureIndex>>,
 ) {
-    for level_children in &levels {
+    for (level_children, has_lighting) in &levels {
         for child in level_children.iter() {
             let Ok((entity, sprite, mut sprite_transform)) = background_sprites.get_mut(child)
             else {
@@ -160,7 +196,7 @@ fn add_background_on_level_spawn<L: Layer3d>(
                 commands.entity(entity).insert(Sprite3d {
                     pixels_per_metre: L::PIXEL_PER_METER,
                     alpha_mode: AlphaMode::Mask(0.5),
-                    unlit: false,
+                    unlit: !has_lighting,
                     ..default()
                 });
                 continue;
@@ -175,6 +211,9 @@ fn add_background_on_level_spawn<L: Layer3d>(
             );
             background_transform.rotate_x(PI / 2.0);
 
+            let mut material = StandardMaterial::from_color(sprite.color);
+            material.unlit = !has_lighting;
+
             commands.entity(entity).insert((
                 Mesh3d(
                     meshes.add(
@@ -183,7 +222,7 @@ fn add_background_on_level_spawn<L: Layer3d>(
                             .size(background_size_world.x, background_size_world.y),
                     ),
                 ),
-                MeshMaterial3d(materials.add(sprite.color)),
+                MeshMaterial3d(materials.add(material)),
                 background_transform,
                 NoFrustumCulling,
             ));
